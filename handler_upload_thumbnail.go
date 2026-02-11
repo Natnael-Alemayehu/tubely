@@ -3,7 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -39,15 +43,41 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	file, h, err := r.FormFile("thumbnail")
+	thumbnail, h, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "formfile error", err)
 		return
 	}
 
-	mt := h.Header.Get("Content-Type")
+	mt, _, err := mime.ParseMediaType(h.Header.Get("Content-Type"))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "mime type parse failed", err)
+		return
+	}
 
-	imageBte, err := io.ReadAll(file)
+	allowedMediaTypes := map[string]struct{}{
+		"image/jpeg": {},
+		"image/png":  {},
+	}
+
+	if _, ok := allowedMediaTypes[mt]; !ok {
+		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("%v mime type not allowed", mt), err)
+		return
+	}
+
+	extension := strings.FieldsFunc(mt, func(r rune) bool {
+		return r == '/'
+	})
+
+	if len(extension) != 2 {
+		respondWithError(w, http.StatusBadRequest, "file extension parsing error", err)
+	}
+
+	fileExtension := extension[1]
+
+	fmt.Println(fileExtension)
+
+	imageBte, err := io.ReadAll(thumbnail)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error reading image date", err)
 		return
@@ -64,16 +94,24 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	tmb := thumbnail{
-		data:      imageBte,
-		mediaType: mt,
+	filename := fmt.Sprintf("%s.%s", videoID.String(), fileExtension)
+	fullpath := filepath.Join(cfg.assetsRoot, filename)
+
+	file, err := os.Create(fullpath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating a file", err)
+		return
 	}
 
-	videoThumbnails[videoID] = tmb
+	_, err = io.Copy(file, strings.NewReader(string(imageBte)))
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Can not copy data to disk", err)
+		return
+	}
 
-	tmburl := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID.String())
+	tmbURL := fmt.Sprintf("http://localhost:%s/assets/%s.%s", cfg.port, videoID.String(), fileExtension)
 
-	vid.ThumbnailURL = &tmburl
+	vid.ThumbnailURL = &tmbURL
 
 	err = cfg.db.UpdateVideo(vid)
 	if err != nil {
