@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -81,7 +82,15 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	key := getAssetPath(mediaType)
+	aspectratio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		fmt.Printf("\n\nerr: %v\n\n", err)
+		respondWithError(w, http.StatusInternalServerError, "Could not get aspect ratio", err)
+		return
+	}
+
+	key := fmt.Sprintf("%v/%v", aspectratio, getAssetPath(mediaType))
+
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(key),
